@@ -2,15 +2,35 @@ from mpi4py import MPI
 import numpy as np
 import json
 import datetime
-import os
+import os, subprocess
 
 
-def log(fh, rank, code, msg):
-    # code: 0 - Info, 1 - Warning, 2 - Error
-    codex = {0: "INFO", 1: "WARNING", 2: "ERROR"}
-    msg = "[" + str(rank) + "][" + codex[code] + "]" + " (" + datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S") \
-          + "): " + msg + "\n"
-    fh.Write_shared(bytearray(msg.encode()))
+def log(vb, code, msg):
+    '''
+    :param vb: (verbosity) 0 - Basic, 1 - Routine, 2 - Debug
+    :param code: (msg category) 0 - Info, 1 - Warning, 2 - Error
+    :param msg:
+    :return: None
+    '''
+    if vb <= verbose or code == 2:
+        codex = {0: "INFO", 1: "WARNING", 2: "ERROR"}
+        msg = "[" + str(rank) + "][" + codex[code] + "]" + " (" + datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S") \
+              + "): " + msg + "\n"
+        flog.Write_shared(bytearray(msg.encode()))
+
+def count_line(loc):
+    '''
+    :param loc: location of target file
+    :return: number of lines in target file
+    '''
+    cmd = "wc -l " + loc
+    process = subprocess.Popen(cmd.split(), stdout=subprocess.PIPE)
+    output, err = process.communicate()
+
+    if output:
+        return int(output.decode().split()[0])
+    else:
+        return -1
 
 if __name__ == "__main__":
 
@@ -37,42 +57,43 @@ if __name__ == "__main__":
         chunk_size = params["chunk_size"]
         chunk_buf = params["chunk_buf"]
         overlap_size = params["overlap_size"]
+        verbose = params["verbose"]
 
-        log(flog, rank, 0, "Loaded in parameters")
+        log(0, 0, "Loaded in parameters")
 
     except:
-        log(flog, rank, 2, "Fail to load in parameters")
+        log(0, 2, "Fail to load in parameters")
 
     ####################################################################################################################
     # read file in chunks
-    fh = MPI.File.Open(comm, "data-small.txt", MPI.MODE_RDONLY)
-    fsig = MPI.File.Open(comm, "signal.txt", MPI.MODE_WRONLY | MPI.MODE_CREATE)
-    fnoi = MPI.File.Open(comm, "noise.txt", MPI.MODE_WRONLY | MPI.MODE_CREATE)
+    fh = MPI.File.Open(comm, "data/data-small.txt", MPI.MODE_RDONLY)
+    fsig = MPI.File.Open(comm, "output/signal.txt", MPI.MODE_WRONLY | MPI.MODE_CREATE)
+    fnoi = MPI.File.Open(comm, "output/noise.txt", MPI.MODE_WRONLY | MPI.MODE_CREATE)
 
     file_size = fh.Get_size()
     block_size = int(file_size / num_nodes)
     block_offset = rank * block_size
 
-    log(flog, rank, 0, "Block size is " + str(block_size) + " bytes")
+    log(1, 0, "Block size is " + str(block_size) + " bytes")
 
     ####################################################################################################################
     num_chunks = int(block_size // chunk_size)
     overlap = []  # store overlap parsed records
     overlap_raw = []  # store overlap raw records
 
-    log(flog, rank, 0, "Read data in " + str(num_chunks) + " chunks")
+    log(1, 0, "Read data in " + str(num_chunks) + " chunks")
     for iter in range(num_chunks):
         # read in a chunk of data
         buf = bytearray(chunk_size + chunk_buf)
         offset = block_offset + iter * chunk_size
-        log(flog, rank, 0, "Reading chunk " + str(iter) + " from " + str(offset) + " to " + str(offset + chunk_size + chunk_buf))
+        log(1, 0, "Reading chunk " + str(iter) + " from " + str(offset) + " to " + str(offset + chunk_size + chunk_buf))
 
         handle = fh.Read_at(offset, buf)
         if handle:
-            log(flog, rank, 2, "Failed to read data: " + handle)
+            log(1, 2, "Failed to read data: " + handle)
 
         # discard everything before the first "\n"
-        rows = overlap_raw + buf[:chunk_size].decode().split("\n")[1:]
+        rows = buf[:chunk_size].decode().split("\n")[1:]
 
         # get remaining part from the remainder
         extra = buf[chunk_size:].decode().split("\n")[0]
@@ -84,8 +105,14 @@ if __name__ == "__main__":
             rows[-1] += extra
 
         parsed = overlap + [(x[0], float(x[1]), int(x[2])) for row in rows for x in [row.split(",")]]
+        rows = overlap_raw + rows
         # sort by time
         sorted_ix = np.argsort([x[0] for x in parsed])
+
+        log(2, 0, "Row size: " + str(len(rows)) + "/" + str(len(overlap_raw)) + ". Parse size: " + str(len(parsed)) +
+            "/" + str(len(overlap)))
+
+        ################################################################################################################
 
         signal = []
         noise = []
@@ -104,8 +131,16 @@ if __name__ == "__main__":
         fsig.Write_shared(bytearray("\n".join([rows[ix] for ix in signal]).encode()))
         fnoi.Write_shared(bytearray("\n".join([rows[ix] for ix in noise]).encode()))
 
+    # insanity check
+    ori_size = count_line("data/data-small.txt")
+    sig_size = count_line("output/signal.txt")
+    noi_size = count_line("output/noise.txt")
+    log(1, 0, "Noise: " + str(noi_size) + ". Difference: " + str(ori_size - sig_size - noi_size))
+
     # close files
     flog.Close()
     fh.Close()
     fsig.Close()
     fnoi.Close()
+
+
