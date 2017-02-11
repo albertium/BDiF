@@ -1,6 +1,11 @@
 {
-    "chunk_size": 500000,
+    "chunk_size": 1000000,
     "chunk_buf": 50,
     "overlap_size": 1000,
-    "verbose": 2
+    "verbose": 0,
+    "input_file": "data/data-big.txt",
+    "signal_file": "output/signal.txt",
+    "noise_file": "output/noise.txt",
+    "log_freq": 50,
+    "enable_timing": 1
 }

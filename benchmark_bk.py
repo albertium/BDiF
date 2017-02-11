@@ -5,7 +5,7 @@ with open("data/data-big.txt", "r") as f:
     raw = f.read()
 
 rows = raw.split("\n")
-parsed = [(x[0], float(x[1]), int(x[2])) for row in rows if row for x in [row.split(",")]]
+parsed = [(datetime.strptime(x[0], "%Y%m%d:%H:%M:%S.%f"), float(x[1]), int(x[2])) for row in rows if row for x in [row.split(",")]]
 print(parsed[:10])
 
 parsed_sorted = sorted(parsed, key=lambda x: x[0])
@@ -28,7 +28,7 @@ print("noise: " + str(len(noise)))
 print("signal: " + str(len(signal)))
 
 tmp = [parsed_sorted[ix] for ix in noise]
-noise_series = [",".join([x[0], "{:.2f}".format(x[1]), str(x[2])]) for x in tmp]
+noise_series = [",".join([datetime.strftime(x[0], "%Y%m%d:%H:%M:%S.%f"), "{:.2f}".format(x[1]), str(x[2])]) for x in tmp]
 
 print(noise_series[-2:])
 
