@@ -8,6 +8,7 @@ import json
 import datetime
 import os
 import sys
+import psutil
 from scipy.stats import chi2
 
 
@@ -52,6 +53,8 @@ if __name__ == "__main__":
     comm = MPI.COMM_WORLD
     rank = comm.Get_rank()
     num_nodes = comm.Get_size()
+
+    p_id = psutil.Process(os.getpid())
 
     ####################################################################################################################
     # read parameters
@@ -101,7 +104,9 @@ if __name__ == "__main__":
 
     ####################################################################################################################
     # main loop
-    track_time = [datetime.timedelta(0)] * 4  # Read time, filter time, write time, misc time
+    track_time = np.array([datetime.timedelta(0)] * 4)  # Read time, parse time, cal time, misc time per "log_freq" iterations
+    track_time_final = np.array([datetime.timedelta(0)] * 4)  # total track time
+    track_mem = np.array([0, np.inf, 0])  # for max, min and mean memory usage
     tic()  # start timing
 
     x_n = 0
@@ -133,42 +138,60 @@ if __name__ == "__main__":
                           for x, p, y in [row.split(",")]
                           if 0 < float(p) < 50000])
 
+        # ---- checkpoint ---- #
+        track_time[1] += toc()  # parse time
+
         # update statistics
         tmp_n = x_n + price.size
         x_stats = x_n/(tmp_n) * x_stats + price.size/(tmp_n) * np.array(list(map(lambda x: np.mean(price**x), range(1, 5))))
         x_n = tmp_n
 
         # ---- checkpoint ---- #
-        track_time[1] += toc()  # filter time
+        track_time[2] += toc()  # calculation time
 
+        # record memory usage
+        mem = p_id.memory_info().rss
+        if mem > track_mem[0]:
+            track_mem[0] = mem  # for max memory
+        if mem < track_mem[1]:
+            track_mem[1] = mem  # for min memory
+        track_mem[2] += mem  # for mean
 
+        if (iteration+1) % log_freq == 0:
+            # log processing time
+            track_time_final += track_time
+            track_time /= log_freq
+            log(0, 0, "Chunk {} to {} processing time: read={:.3f}s parse={:.3f}s calculation={:.3f}s misc={:.3f}s"
+                .format(iteration-log_freq+1, iteration, *[x.total_seconds() for x in track_time]))
+
+            # log processing memory usage
+            track_mem[2] /= log_freq
+            track_mem /= 2 ** 20
+            log(0, 0, "Chunk {} to {} memory usage: max={:.1f} MB min={:.1f} MB mean={:.1f} MB"
+                .format(iteration-log_freq+1, iteration, *track_mem))
+            track_mem = np.array([0, np.inf, 0])  # reset for next "log_freq" iterations
+
+    # collect statistic from all the threads
     all_stats = comm.gather((x_n, x_stats), root=0)
     if rank == 0:
+        # aggregate results
         f_n = np.sum([n[0] for n in all_stats])
         f_stats = np.zeros(4)
         for stat in all_stats:
             f_stats += stat[0]/f_n * stat[1]
 
+        # calculate statistics - standard deviation, skewness, kurtosis
         sq = np.sqrt(f_stats[1] - np.power(f_stats[0], 2))
         skew = (f_stats[2] - 3*f_stats[0]*f_stats[1] + 2*np.power(f_stats[0], 3)) / np.power(sq, 3)
         kurt = (f_stats[3] - 4*f_stats[0]*f_stats[2] + 6*f_stats[0]*f_stats[0]*f_stats[1] - 3*np.power(f_stats[0], 4)) \
                / np.power(sq, 4)
-        JB = (skew*skew + 0.25*np.power(kurt-3, 2))
-
-        # to avoid overflow
-        if f_n > 10000 and JB > 1:
-            JB = 10000
-            msg = "(this number is truncated to avoid overflow)"
-        else:
-            JB = f_n / 6 * JB
-            msg = ""
-
+        JB = f_n / 6 * (skew*skew + 0.25*np.power(kurt-3, 2))
         p_value = 1 - chi2.cdf(JB, 2)
 
         # write result to file
         with open(normal_file, "w") as f:
-            f.write("Skewness:{:.5f}\nKurtosis:{:.5f}\nJB Statistic:{:.3f}{}\np-value:{:.6f}\n"
-                    .format(skew, kurt, JB, msg, p_value))
+            f.write("Skewness:{:.5f}\nKurtosis:{:.5f}\nJB Statistic:{:.3f}\np-value:{:.6f}\n"
+                    .format(skew, kurt, JB, p_value))
             f.write("Normal:{}".format(bool(p_value > 0.05)))
 
     # close files

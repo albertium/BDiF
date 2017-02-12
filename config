@@ -1,5 +1,5 @@
 {
-    "chunk_size": 1000000,
+    "chunk_size": 2000000,
     "chunk_buf": 50,
     "overlap_size": 1000,
     "verbose": 0,
@@ -7,6 +7,6 @@
     "signal_file": "output/signal.txt",
     "noise_file": "output/noise.txt",
     "normal_file": "output/normal.txt",
-    "log_freq": 50,
+    "log_freq": 100,
     "enable_timing": 1
 }

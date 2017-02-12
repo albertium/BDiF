@@ -8,6 +8,7 @@ import json
 import datetime
 import os
 import sys
+import psutil
 import subprocess
 
 
@@ -69,6 +70,8 @@ if __name__ == "__main__":
     rank = comm.Get_rank()
     num_nodes = comm.Get_size()
 
+    p_id = psutil.Process(os.getpid())
+
     ####################################################################################################################
     # read parameters
     try:
@@ -127,6 +130,7 @@ if __name__ == "__main__":
     tot_noi = 0  # total number of noise
     track_counts = [0, 0, 0]  # check progress
     track_time = [datetime.timedelta(0)] * 4  # Read time, filter time, write time, misc time
+    track_mem = np.array([0, np.inf, 0])  # for max, min and mean memory usage
     tic()  # start timing
 
     for iteration in range(num_chunks):
@@ -205,10 +209,25 @@ if __name__ == "__main__":
         # ---- checkpoint ---- #
         track_time[3] += toc()
 
+        # record memory usage
+        mem = p_id.memory_info().rss
+        if mem > track_mem[0]:
+            track_mem[0] = mem  # for max memory
+        if mem < track_mem[1]:
+            track_mem[1] = mem  # for min memory
+        track_mem[2] += mem  # for mean
+
         if (iteration + 1) % log_freq == 0:
             log(0, 0, "Processed chunk {}. Cumulatively {:,} records, {:,} signal and {:,} noise"
                 .format(iteration, *track_counts))
             track_counts = [0, 0, 0]
+
+            # log processing memory usage
+            track_mem[2] /= log_freq
+            track_mem /= 2 ** 20
+            log(0, 0, "Chunk {} to {} memory usage: max={:.1f} MB min={:.1f} MB mean={:.1f} MB"
+                .format(iteration - log_freq + 1, iteration, *track_mem))
+            track_mem = np.array([0, np.inf, 0])  # reset for next "log_freq" iterations
 
 
     # insanity check
