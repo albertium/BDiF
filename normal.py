@@ -143,7 +143,7 @@ if __name__ == "__main__":
 
         # update statistics
         tmp_n = x_n + price.size
-        x_stats = x_n/(tmp_n) * x_stats + price.size/(tmp_n) * np.array(list(map(lambda x: np.mean(price**x), range(1, 5))))
+        x_stats = x_n/tmp_n*x_stats + price.size/tmp_n*np.array(list(map(lambda x: np.mean(price**x), range(1, 5))))
         x_n = tmp_n
 
         # ---- checkpoint ---- #
